@@ -1,0 +1,135 @@
+<?php
+/**
+ * Implementation of hook_nodeapi().
+ */
+function webfm_linktosearch_nodeapi(&$node, $op) {
+  $body = $node->body;
+  $nid = $node->nid;
+  switch ($op) {
+    case 'update':
+      if(module_exists('webfm')) {
+        $webfm_filestoattach = _webfm_linktosearch_webfm_files_search($body);
+        webfm_dbupdate_attach($node->nid, $webfm_filestoattach);
+      }
+      $cck_filestoattach = _webfm_linktosearch_url_files_search($body);
+      $added_files = _webfm_linktosearch_add_cck_field_file_attach($node, $cck_filestoattach);
+    break;
+    case 'insert':
+      if(module_exists('webfm')) {
+        $webfm_filestoattach = _webfm_linktosearch_webfm_files_search($body);
+        foreach($webfm_filestoattach as $fid) {          
+          webfm_dbinsert_attach($node->nid, $fid, $i++);
+        }
+      }
+      $cck_filestoattach = _webfm_linktosearch_url_files_search($body);
+      $added_files = _webfm_linktosearch_add_cck_field_file_attach($node, $cck_filestoattach);
+    break;
+    //webFM and CCK modules usually delete their attachments by themselves
+    case 'delete':
+    break;
+  }
+}
+
+/**
+ * Search of links with a webFM path
+ */
+function _webfm_linktosearch_webfm_files_search($node_body = '') {
+  $files_array = array();
+  $node_body = trim($node_body);
+  if(!empty($node_body)) {
+    $nbody = preg_replace('/[[:cntrl:]]/', ' ', $node_body);
+    preg_match_all('/webfm_send\/([a-z0-9]{1,6})".*?>(.*?)<\/a>/', $nbody, $m_nbody);
+    foreach($m_nbody[1] as $k=>$fid) {
+      if(is_numeric($fid))
+        $files_array[] = $fid + 0;
+      //it could be a link without file ID - it wasn't written in the database*/
+      else
+        $unknown_link[$nid][] = $m_nbody[2][$k];
+    }
+  }
+  return $files_array;
+}
+
+/**
+ * Search of links with an ordinary file path
+ */
+function _webfm_linktosearch_url_files_search($node_body) {
+  $files_array = array();
+  $node_body = trim($node_body);
+  if(!empty($node_body)) {
+    $nbody = preg_replace('/[[:cntrl:]]/', ' ', $node_body);
+    preg_match_all('/sites\/default\/files\/([a-åA-Å0-9 _\-\/Üü]{1,225}).(txt|pdf|doc|docx|ppt|pptx|xls|xlsx)".*?>(.*?)<\/a>/', $nbody, $m_nbody);
+    foreach($m_nbody[1] as $k=>$f_name) {
+        $files_array[] = 'sites/default/files/'.$f_name.'.'.$m_nbody[2][$k];
+    }
+  }
+  return $files_array;
+}
+
+/**
+ * Attach files to the node
+ */
+function _webfm_linktosearch_add_cck_field_file_attach($node, $files = array()) {
+  $i = !empty($node->field_file) ? count($node->field_file) : 0;
+  if(empty($files) || empty($node->nid))
+    return;
+  else {
+    foreach($files as $fpath) {
+      $fid = _webfm_linktosearch_get_fid($fpath);
+      if(!empty($fid)) {
+        $content_field_file = array('vid'=>$node->vid, 'nid'=>$node->nid, 'delta'=>$i++, 'field_file_fid'=>$fid, 'field_file_list'=>1, 'field_file_data'=>NULL);
+        dpm($content_field_file);
+        //write record in 'content_field_file' db table - attach this file to the node
+        drupal_write_record('content_field_file', $content_field_file);
+      }
+      else
+        drupal_set_message('One of files can\'t be added to the database, please, check whether the file still exists: '.$fpath);
+    }
+  }
+  return $i;
+}
+
+/**
+ * Get ID of file from the database
+ */
+function _webfm_linktosearch_get_fid($fpath) {
+  if(empty($fpath))
+    return false;
+  else {
+    $fid = 0;
+    //check if a file exists in the database
+    $fid_obj = db_fetch_object(db_query("SELECT f.fid FROM {files} f WHERE f.filepath = '%s'", $fpath));
+    $fid = $fid_obj->fid;
+
+    if (!$fid) {
+      //write record in 'files' db table
+      $inserted_file = _webfm_linktosearch_save_file($fpath);
+      $fid = $inserted_file->fid;
+    }
+    return $fid;
+  }
+}
+
+/**
+* Change version of field_file_save_file() function from filefield/field_file.inc
+*/
+function _webfm_linktosearch_save_file($filepath) {
+  if(!empty($filepath)) {
+    $file = new stdClass();
+    $file->uid = $account->uid;
+    $file->filename = @basename($filepath);
+    $file->filepath = $filepath;
+    $file->filemime = module_exists('mimedetect') ? mimedetect_mime($file) : file_get_mimetype($file->filename);
+    $file->source = '_webfm_linktosearch_save_file';
+    $file->destination = $filepath;
+    $file->filesize = @filesize($filepath);
+    $file->status = FILE_STATUS_TEMPORARY;
+    $file->timestamp = time();
+    
+    drupal_write_record('files', $file);
+
+    return $file;
+  }
+  else
+    return false;
+}

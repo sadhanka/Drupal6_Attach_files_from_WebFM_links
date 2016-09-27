@@ -1,0 +1,6 @@
+name = WebFM Link to Search
+description = Allows to add WebFM file link to search index by adding file into attachments
+core = 6.x
+dependencies[] = WebFM
+dependencies[] = Filefield
+package = "Custom"
